@@ -2,6 +2,7 @@
 #include <string>
 #include <cmath>
 #include <vector>
+#include <iomanip>
 
 #include "opencv2/calib3d.hpp"
 #include "opencv2/imgproc.hpp"
@@ -33,12 +34,14 @@ static void onMouse( int event, int x, int y, int, void* )
     std::cout << "Clicked on : " << seed << " > Disparity 1 : " << d << " > Disparity 2 : " << d+doffs << '\n';
 
     double ZZ = ((focalSize * baseLine) / (d+doffs)) ;
-    std::cout << "Distance (cm) : " << ZZ * squareSize << '\n';
+    std::cout << "Distance (cm) : " << ZZ << '\n';
 
     std::cout << "Reproject3D (raw) : " << pts3D.at<Vec3f>(y,x)[2] << '\n';
 }
 
 int main(int argc, char **argv) {
+    std::cout << std::setprecision(20);
+
     CommandLineParser parser(argc, argv, "{intrinsics||}{extrinsics||}{leftImageP||}{rightImageP||}");
     string intrinsicsFilePath = parser.get<string>("intrinsics");
     string extrinsicsFilePath = parser.get<string>("extrinsics");
@@ -53,7 +56,7 @@ int main(int argc, char **argv) {
     Mat leftDistorsionMatrix, rightDistorsionMatrix;
     Mat leftRectificationMatrix, rightRectificationMatrix;
     Mat leftProjectionMatrix, rightProjectionMatrix;
-    Mat Q;
+    Mat Q,T;
 
     FileStorage fsINT(intrinsicsFilePath, FileStorage::READ);
     fsINT["M1"] >> leftCameraMatrix;
@@ -68,6 +71,7 @@ int main(int argc, char **argv) {
     fsEXT["P1"] >> leftProjectionMatrix;
     fsEXT["P2"] >> rightProjectionMatrix;
     fsEXT["Q"] >> Q;
+    fsEXT["T"] >> T;
     fsEXT.release();
 
     /*
@@ -79,13 +83,15 @@ int main(int argc, char **argv) {
     focalSize = Q.at<double>(2,3);
     std::cout << "Focal Length : " << focalSize << '\n';
 
-    double offsetLeft = leftCameraMatrix.at<double>(0,2);
-    double offsetRight = rightCameraMatrix.at<double>(0,2);
-    doffs = offsetLeft - offsetRight;
+    double offsetLeft = leftProjectionMatrix.at<double>(0,2);
+    double offsetRight = rightProjectionMatrix.at<double>(0,2);
+    doffs = offsetLeft-offsetRight;
+    
     std::cout << "Doffs : " << doffs << '\n';
 
-    double baseLineQ = Q.at<double>(3,2);
-    baseLine = 1/baseLineQ;
+    //double baseLineQ = Q.at<double>(3,2);
+    //baseLine = 1/baseLineQ;
+    baseLine = abs(T.at<double>(0,0));
     std::cout << "BaseLine 1 : " << baseLine << '\n';
 
     // Un-distort source images
