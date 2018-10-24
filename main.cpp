@@ -24,23 +24,24 @@ double focalSize, doffs;
 double baseLine;
 float squareSize = 3.5f; // cm
 
-static void onMouse( int event, int x, int y, int, void* )
-{
-    if( event != EVENT_LBUTTONDOWN )
+static void onMouse(int event, int x, int y, int, void *) {
+    if (event != EVENT_LBUTTONDOWN)
         return;
 
-    Point seed = Point(x,y);
-    float d = filtered_disp_16.at<float>(y,x);
-    std::cout << "Clicked on : " << seed << " > Disparity 1 : " << d << " > Disparity 2 : " << d+doffs << '\n';
+    std::cout << std::setprecision(5);
 
-    double ZZ = ((focalSize * baseLine) / (d+doffs)) ;
+    Point seed = Point(x, y);
+    float d = filtered_disp_16.at<float>(y, x);
+    std::cout << "Clicked on : " << seed << " > Disparity 1 : " << d + doffs << '\n';
+
+    double ZZ = ((focalSize * baseLine) / (d + doffs));
     std::cout << "Distance (cm) : " << ZZ << '\n';
 
-    std::cout << "Reproject3D (raw) : " << pts3D.at<Vec3f>(y,x)[2] << '\n';
+    std::cout << "Reproject3D (raw) : " << pts3D.at<Vec3f>(y, x)[2] << '\n';
 }
 
 int main(int argc, char **argv) {
-    std::cout << std::setprecision(20);
+    std::cout << std::setprecision(5);
 
     CommandLineParser parser(argc, argv, "{intrinsics||}{extrinsics||}{leftImageP||}{rightImageP||}");
     string intrinsicsFilePath = parser.get<string>("intrinsics");
@@ -56,7 +57,7 @@ int main(int argc, char **argv) {
     Mat leftDistorsionMatrix, rightDistorsionMatrix;
     Mat leftRectificationMatrix, rightRectificationMatrix;
     Mat leftProjectionMatrix, rightProjectionMatrix;
-    Mat Q,T;
+    Mat Q, T;
 
     FileStorage fsINT(intrinsicsFilePath, FileStorage::READ);
     fsINT["M1"] >> leftCameraMatrix;
@@ -80,49 +81,62 @@ int main(int argc, char **argv) {
     */
 
     // Get useful values from camera matrix
-    focalSize = Q.at<double>(2,3);
+    focalSize = Q.at<double>(2, 3);
     std::cout << "Focal Length : " << focalSize << '\n';
 
-    double offsetLeft = leftProjectionMatrix.at<double>(0,2);
-    double offsetRight = rightProjectionMatrix.at<double>(0,2);
-    doffs = offsetLeft-offsetRight;
-    
+    double offsetLeft = leftProjectionMatrix.at<double>(0, 2);
+    double offsetRight = rightProjectionMatrix.at<double>(0, 2);
+    doffs = offsetLeft - offsetRight;
     std::cout << "Doffs : " << doffs << '\n';
 
-    //double baseLineQ = Q.at<double>(3,2);
-    //baseLine = 1/baseLineQ;
-    baseLine = abs(T.at<double>(0,0));
-    std::cout << "BaseLine 1 : " << baseLine << '\n';
+    baseLine = 1 / Q.at<double>(3, 2);
+    //baseLine = abs(T.at<double>(0,0)); Should be similar
+    std::cout << "BaseLine : " << baseLine << '\n';
 
     // Un-distort source images
+    Mat leftImageCorr, rightImageCorr;
+
     Mat rectified_mapping_[2][2];
     initUndistortRectifyMap(leftCameraMatrix, leftDistorsionMatrix, leftRectificationMatrix, leftProjectionMatrix,
                             Size(640, 480), CV_32F, rectified_mapping_[0][0], rectified_mapping_[0][1]);
     initUndistortRectifyMap(rightCameraMatrix, rightDistorsionMatrix, rightRectificationMatrix, rightProjectionMatrix,
                             Size(640, 480), CV_32F, rectified_mapping_[1][0], rectified_mapping_[1][1]);
 
-    Mat leftImageCorr, rightImageCorr;
-    remap(leftImage, leftImageCorr, rectified_mapping_[0][0], rectified_mapping_[0][1], INTER_LINEAR);
-    remap(rightImage, rightImageCorr, rectified_mapping_[1][0], rectified_mapping_[1][1], INTER_LINEAR);
+    Mat leftImageCorrTemp, rightImageCorrTemp;
+    remap(leftImage, leftImageCorrTemp, rectified_mapping_[0][0], rectified_mapping_[0][1], INTER_LINEAR);
+    remap(rightImage, rightImageCorrTemp, rectified_mapping_[1][0], rectified_mapping_[1][1], INTER_LINEAR);
+
+    // Improve low light
+    Ptr<CLAHE> clahe = cv::createCLAHE(2.0, Size(8,8));
+    clahe->apply(leftImageCorrTemp, leftImageCorrTemp);
+    clahe->apply(rightImageCorrTemp, rightImageCorrTemp);
+
+    cv::GaussianBlur(leftImageCorrTemp, leftImageCorrTemp, Size(3,3), 0);
+    cv::GaussianBlur(rightImageCorrTemp, rightImageCorrTemp, Size(3,3), 0);
+
+    cv::medianBlur(leftImageCorrTemp, leftImageCorr, 9);
+    cv::medianBlur(rightImageCorrTemp, rightImageCorr, 9);
 
     // Matching
     // Tried values found in https://github.com/opencv/opencv/blob/master/samples/cpp/stereo_match.cpp
     // Whatever i tried here gives me the same distance though
     Mat left_disp, right_disp;
 
-    int blockSize = 3;
+    int blockSize = 5;
     int cn = leftImageCorr.channels();
     Size img_size = leftImageCorr.size();
     int P1 = 8 * cn * blockSize * blockSize;
     int P2 = 32 * cn * blockSize * blockSize;
-    int numberOfDisparities = ((img_size.width/8) + 15) & -16;
+    int numberOfDisparities = ((img_size.width / 8) + 15) & -16;
 
+    std::cout << "P1 : " << P1 << '\n';
+    std::cout << "P2 : " << P2 << '\n';
     std::cout << "Number of Disparities : " << numberOfDisparities << '\n';
 
     auto left_matcher = cv::StereoSGBM::create(0, numberOfDisparities, blockSize);
     left_matcher->setP1(P1);
     left_matcher->setP2(P2);
-    left_matcher->setUniquenessRatio(10);
+    left_matcher->setUniquenessRatio(5);
     left_matcher->setSpeckleWindowSize(100);
     left_matcher->setSpeckleRange(32);
     left_matcher->setDisp12MaxDiff(1);
@@ -137,14 +151,14 @@ int main(int argc, char **argv) {
     //Filtering
     double lambda = 8000.0;
     double sigma = 1.5;
-    double vis_mult = 1.0;
+    double vis_mult = 5.0;
 
     cv::Mat filtered_disp;
     wls_filter->setLambda(lambda);
     wls_filter->setSigmaColor(sigma);
     wls_filter->filter(left_disp, leftImageCorr, filtered_disp, right_disp);
 
-    filtered_disp.convertTo(filtered_disp_16, CV_32F, 1./16);
+    filtered_disp.convertTo(filtered_disp_16, CV_32F, 1. / 16);
     reprojectImageTo3D(filtered_disp_16, pts3D, Q, false, CV_32F);
 
     //! [visualization]
